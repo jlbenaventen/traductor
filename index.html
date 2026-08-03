@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.3
+  Versión: 1.4
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
@@ -18,6 +18,10 @@
           y un casillero manual de "audífonos conectados" que habilita Iniciar — no existe forma
           confiable de detectar el dispositivo de audio real desde una página web, así que es un
           recordatorio, no una detección automática.
+    1.4 - Se cambió el reconocimiento de voz de continuous=true a continuous=false con reinicio
+          automático por nuestra cuenta en cada frase. El modo continuo estaba causando que en
+          algunos celulares (sobre todo Android) se repitieran frases/palabras ya traducidas,
+          porque el navegador volvía a marcar como "nuevo" un resultado que ya se había procesado.
 -->
 <html lang="es">
 <head>
@@ -186,7 +190,7 @@
   </div>
 
 <script>
-  const APP_VERSION = '1.3';
+  const APP_VERSION = '1.4';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
@@ -378,17 +382,16 @@
 
     if (!SpeechRecognitionImpl) { setStatus('Este navegador no soporta reconocimiento de voz', 'error'); return; }
 
-    // Algunos navegadores móviles no respetan bien "resultIndex" en modo continuo y vuelven a
-    // mandar resultados finales que ya habíamos procesado — esto es lo que causaba que la misma
-    // frase se tradujera/hablara varias veces. Se lleva la cuenta manual de hasta dónde ya se
-    // procesó (se reinicia cada vez que arranca una sesión de reconocimiento nueva) y además se
-    // descarta cualquier frase idéntica a la última ya encolada, como respaldo extra.
-    let finalResultsProcessed = 0;
+    // continuous=true resultó poco confiable en la práctica (sobre todo en Android): algunos
+    // navegadores vuelven a mandar como "final" resultados que ya se habían traducido, dando
+    // la impresión de que repite la última palabra/frase una y otra vez. Con continuous=false
+    // cada sesión captura UNA sola frase y se cierra sola; nosotros la reiniciamos apenas
+    // termina (onend), así igual queda escuchando todo el rato, pero sin ese efecto de eco.
     let lastQueuedText = '';
 
     recognition = new SpeechRecognitionImpl();
     recognition.lang = langToBCP47[sourceLang] || 'en-US';
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true; // para mostrar texto en vivo mientras escucha
 
     recognition.onresult = (event) => {
@@ -396,8 +399,6 @@
       for (let i = 0; i < event.results.length; i++) {
         const res = event.results[i];
         if (res.isFinal) {
-          if (i < finalResultsProcessed) continue; // ya procesado antes
-          finalResultsProcessed = i + 1;
           const text = res[0].transcript.trim();
           if (text && text !== lastQueuedText) {
             queue.push(text);
@@ -412,18 +413,15 @@
     };
 
     recognition.onerror = (e) => {
+      // No reiniciamos acá: "onend" se dispara igual después de un error y es quien
+      // se encarga de reiniciar, para no arrancar dos sesiones a la vez por error.
       console.error('Reconocimiento error:', e.error);
-      if (listening && e.error !== 'aborted') {
-        finalResultsProcessed = 0; // nueva sesión al reiniciar
-        try { recognition.start(); } catch (err) {}
-      }
     };
 
     recognition.onend = () => {
-      // El reconocimiento puede cortarse solo (límite del navegador/SO) aunque sigamos "escuchando";
-      // si es así, se reinicia enseguida, sin importar si en ese momento se está traduciendo/hablando.
+      // Cada sesión dura una sola frase (continuous=false) y termina sola; si seguimos
+      // "escuchando", se abre una sesión nueva de inmediato para el próximo tramo de habla.
       if (listening) {
-        finalResultsProcessed = 0; // nueva sesión al reiniciar
         try { recognition.start(); } catch (e) {}
       }
     };
