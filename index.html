@@ -136,7 +136,7 @@
   </div>
 
 <script>
-  const APP_VERSION = '1.0';
+  const APP_VERSION = '1.2';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
@@ -277,6 +277,14 @@
 
     if (!SpeechRecognitionImpl) { statusEl.textContent = 'Este navegador no soporta reconocimiento de voz'; return; }
 
+    // Algunos navegadores móviles no respetan bien "resultIndex" en modo continuo y vuelven a
+    // mandar resultados finales que ya habíamos procesado — esto es lo que causaba que la misma
+    // frase se tradujera/hablara varias veces. Se lleva la cuenta manual de hasta dónde ya se
+    // procesó (se reinicia cada vez que arranca una sesión de reconocimiento nueva) y además se
+    // descarta cualquier frase idéntica a la última ya encolada, como respaldo extra.
+    let finalResultsProcessed = 0;
+    let lastQueuedText = '';
+
     recognition = new SpeechRecognitionImpl();
     recognition.lang = langToBCP47[sourceLang] || 'en-US';
     recognition.continuous = true;
@@ -284,11 +292,16 @@
 
     recognition.onresult = (event) => {
       let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      for (let i = 0; i < event.results.length; i++) {
         const res = event.results[i];
         if (res.isFinal) {
+          if (i < finalResultsProcessed) continue; // ya procesado antes
+          finalResultsProcessed = i + 1;
           const text = res[0].transcript.trim();
-          if (text) queue.push(text);
+          if (text && text !== lastQueuedText) {
+            queue.push(text);
+            lastQueuedText = text;
+          }
         } else {
           interim += res[0].transcript;
         }
@@ -300,6 +313,7 @@
     recognition.onerror = (e) => {
       console.error('Reconocimiento error:', e.error);
       if (listening && e.error !== 'aborted') {
+        finalResultsProcessed = 0; // nueva sesión al reiniciar
         try { recognition.start(); } catch (err) {}
       }
     };
@@ -308,6 +322,7 @@
       // El reconocimiento puede cortarse solo (límite del navegador/SO) aunque sigamos "escuchando";
       // si es así, se reinicia enseguida, sin importar si en ese momento se está traduciendo/hablando.
       if (listening) {
+        finalResultsProcessed = 0; // nueva sesión al reiniciar
         try { recognition.start(); } catch (e) {}
       }
     };
