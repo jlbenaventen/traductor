@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Abrir Traductor</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #1a73e8 0%, #0d47a1 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: white;
+    text-align: center;
+    padding: 24px;
+  }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  p.sub { opacity: 0.85; font-size: 15px; margin-top: 0; margin-bottom: 32px; max-width: 320px; }
+  .btn {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    padding: 20px;
+    font-size: 19px;
+    font-weight: 600;
+    border: none;
+    border-radius: 16px;
+    background: white;
+    color: #1a73e8;
+    text-decoration: none;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .steps {
+    margin-top: 36px;
+    max-width: 320px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 14px;
+    padding: 16px 20px;
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .steps b { display: block; margin-bottom: 6px; font-size: 15px; }
+  .note {
+    margin-top: 20px;
+    max-width: 320px;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Traductor para el tour</h1>
+  <p class="sub">Toca el botón para abrir Google Translate</p>
+
+  <a class="btn" id="openBtn" href="#">Abrir Google Translate</a>
+
+  <div class="steps">
+    <b>Dentro de la app:</b>
+    1. Toca el ícono de "Conversación" (dos personas).<br>
+    2. Confirma los idiomas (ej. Inglés → Español).<br>
+    3. Toca el micrófono del lado del guía para que hable.
+  </div>
+
+  <p class="note">
+    Nota: por restricciones de iOS, este botón solo abre la app — el micrófono
+    hay que activarlo con un toque dentro de la app, no se puede automatizar.
+  </p>
+
+<script>
+  var appScheme = "googletranslate://";
+  var appStoreUrl = "https://apps.apple.com/us/app/google-translate/id414706506";
+
+  document.getElementById("openBtn").addEventListener("click", function (e) {
+    e.preventDefault();
+    var start = Date.now();
+    window.location.href = appScheme;
+
+    // Si tras ~1.2s seguimos aquí, probablemente la app no está instalada.
+    setTimeout(function () {
+      if (Date.now() - start < 2000 && !document.hidden) {
+        window.location.href = appStoreUrl;
+      }
+    }, 1200);
+  });
+</script>
+
+</body>
+</html>
