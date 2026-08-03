@@ -2,93 +2,283 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Abrir Traductor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Traductor de voz - Tour</title>
 <style>
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0;
     min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
     background: linear-gradient(180deg, #1a73e8 0%, #0d47a1 100%);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: white;
-    text-align: center;
-    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 16px 40px;
   }
-  h1 { font-size: 22px; margin-bottom: 8px; }
-  p.sub { opacity: 0.85; font-size: 15px; margin-top: 0; margin-bottom: 32px; max-width: 320px; }
-  .btn {
-    display: block;
-    width: 100%;
-    max-width: 320px;
-    padding: 20px;
-    font-size: 19px;
-    font-weight: 600;
-    border: none;
-    border-radius: 16px;
-    background: white;
-    color: #1a73e8;
-    text-decoration: none;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-    -webkit-tap-highlight-color: transparent;
-  }
-  .steps {
-    margin-top: 36px;
-    max-width: 320px;
+  h1 { font-size: 19px; margin: 6px 0 2px; text-align: center; }
+  .status { font-size: 14px; opacity: 0.85; margin-bottom: 18px; min-height: 18px; }
+
+  .config {
+    width: 100%; max-width: 380px;
     background: rgba(255,255,255,0.12);
     border-radius: 14px;
-    padding: 16px 20px;
-    text-align: left;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+  .config label { display:block; font-size: 12px; opacity: 0.8; margin-top: 10px; margin-bottom: 4px; }
+  .config input, .config select {
+    width: 100%; padding: 10px; border-radius: 8px; border: none;
+    font-size: 15px; background: rgba(255,255,255,0.92); color: #0d47a1;
+  }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  .swap-btn {
+    margin-top: 12px; width: 100%; padding: 8px; border-radius: 8px; border: none;
+    background: rgba(255,255,255,0.25); color: white; font-size: 13px;
+  }
+
+  .big-btn {
+    width: 100%; max-width: 380px;
+    padding: 26px;
+    font-size: 20px; font-weight: 700;
+    border: none; border-radius: 18px;
+    background: #34a853; color: white;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    margin-bottom: 18px;
+  }
+  .big-btn.listening { background: #ea4335; }
+
+  .log {
+    width: 100%; max-width: 380px;
+    flex: 1;
+    display: flex; flex-direction: column-reverse;
+    gap: 10px;
+    overflow-y: auto;
+  }
+  .entry {
+    background: rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 10px 14px;
     font-size: 14px;
-    line-height: 1.5;
   }
-  .steps b { display: block; margin-bottom: 6px; font-size: 15px; }
+  .entry .orig { opacity: 0.7; font-size: 12px; margin-bottom: 4px; }
+  .entry .trad { font-size: 16px; font-weight: 600; }
+
   .note {
-    margin-top: 20px;
-    max-width: 320px;
-    font-size: 12px;
-    opacity: 0.75;
+    max-width: 380px; font-size: 11.5px; opacity: 0.7; margin-top: 14px; text-align: center; line-height: 1.5;
   }
+  .hidden { display: none; }
+  .toggle-config { background: none; border: none; color: white; opacity: 0.75; font-size: 12px; margin-bottom: 10px; text-decoration: underline; }
 </style>
 </head>
 <body>
 
-  <h1>Traductor para el tour</h1>
-  <p class="sub">Toca el botón para abrir Google Translate</p>
+  <h1>Traductor de voz</h1>
+  <div class="status" id="status">Configura y toca Iniciar</div>
 
-  <a class="btn" id="openBtn" href="#">Abrir Google Translate</a>
+  <button class="toggle-config" id="toggleConfigBtn">Mostrar/ocultar configuración</button>
 
-  <div class="steps">
-    <b>Dentro de la app:</b>
-    1. Toca el ícono de "Conversación" (dos personas).<br>
-    2. Confirma los idiomas (ej. Inglés → Español).<br>
-    3. Toca el micrófono del lado del guía para que hable.
+  <div class="config" id="configBox">
+    <label>API Key de Google Cloud Translation</label>
+    <input type="password" id="apiKey" placeholder="Pega tu API key aquí">
+
+    <div class="row">
+      <div>
+        <label>El guía habla en</label>
+        <select id="sourceLang">
+          <option value="en">Inglés</option>
+          <option value="fr">Francés</option>
+          <option value="it">Italiano</option>
+          <option value="de">Alemán</option>
+          <option value="pt">Portugués</option>
+          <option value="ja">Japonés</option>
+          <option value="zh">Chino</option>
+        </select>
+      </div>
+      <div>
+        <label>Yo escucho en</label>
+        <select id="targetLang">
+          <option value="es" selected>Español</option>
+          <option value="en">Inglés</option>
+        </select>
+      </div>
+    </div>
+    <button class="swap-btn" id="saveBtn">Guardar configuración</button>
   </div>
 
-  <p class="note">
-    Nota: por restricciones de iOS, este botón solo abre la app — el micrófono
-    hay que activarlo con un toque dentro de la app, no se puede automatizar.
-  </p>
+  <button class="big-btn" id="startBtn">Iniciar</button>
+
+  <div class="log" id="log"></div>
+
+  <div class="note" id="platformNote">
+    Necesita conexión a internet y permiso de micrófono. En iPhone (Safari) debe quedar
+    abierta en el navegador — no funciona guardada como acceso directo en pantalla de inicio.
+    En Android (Chrome) normalmente sí funciona igual como acceso directo, pero no está
+    garantizado si se abre como archivo local: si el micrófono no pide permiso, prueba
+    subiendo el archivo a un hosting simple (https) en vez de abrirlo directo del teléfono.
+    El audio traducido sale por donde esté enrutado el audio de medios — confirma que el
+    dispositivo de salida (audífonos u otro) esté conectado antes de tocar Iniciar.
+  </div>
 
 <script>
-  var appScheme = "googletranslate://";
-  var appStoreUrl = "https://apps.apple.com/us/app/google-translate/id414706506";
+  const $ = id => document.getElementById(id);
+  const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
+  const configBox = $('configBox');
 
-  document.getElementById("openBtn").addEventListener("click", function (e) {
-    e.preventDefault();
-    var start = Date.now();
-    window.location.href = appScheme;
+  // Cargar configuración guardada
+  $('apiKey').value = localStorage.getItem('tv_apiKey') || '';
+  $('sourceLang').value = localStorage.getItem('tv_sourceLang') || 'en';
+  $('targetLang').value = localStorage.getItem('tv_targetLang') || 'es';
 
-    // Si tras ~1.2s seguimos aquí, probablemente la app no está instalada.
-    setTimeout(function () {
-      if (Date.now() - start < 2000 && !document.hidden) {
-        window.location.href = appStoreUrl;
+  // Solo pedir configuración la primera vez en este teléfono/navegador.
+  // Si ya quedó guardada antes, se oculta automáticamente y queda lista para usar.
+  const yaConfigurado = localStorage.getItem('tv_configured') === 'true';
+  if (yaConfigurado) {
+    configBox.classList.add('hidden');
+    statusEl.textContent = 'Listo. Toca Iniciar.';
+  } else {
+    statusEl.textContent = 'Primera vez: completa la configuración y guarda';
+  }
+
+  $('toggleConfigBtn').addEventListener('click', () => configBox.classList.toggle('hidden'));
+
+  $('saveBtn').addEventListener('click', () => {
+    const key = $('apiKey').value.trim();
+    if (!key) { statusEl.textContent = 'Falta pegar la API key'; return; }
+    localStorage.setItem('tv_apiKey', key);
+    localStorage.setItem('tv_sourceLang', $('sourceLang').value);
+    localStorage.setItem('tv_targetLang', $('targetLang').value);
+    localStorage.setItem('tv_configured', 'true');
+    statusEl.textContent = 'Configuración guardada. Listo para usar.';
+    configBox.classList.add('hidden');
+  });
+
+  // Botón para reconfigurar manualmente si alguna vez lo necesitan (cambiar idioma, otra key, etc.)
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Cambiar configuración guardada';
+  resetBtn.className = 'toggle-config';
+  resetBtn.style.marginTop = '0';
+  resetBtn.addEventListener('click', () => {
+    localStorage.removeItem('tv_configured');
+    configBox.classList.remove('hidden');
+    statusEl.textContent = 'Edita y guarda de nuevo';
+  });
+  $('toggleConfigBtn').insertAdjacentElement('afterend', resetBtn);
+
+  const langToBCP47 = { en:'en-US', fr:'fr-FR', it:'it-IT', de:'de-DE', pt:'pt-PT', ja:'ja-JP', zh:'zh-CN', es:'es-ES' };
+
+  let recognition = null;
+  let listening = false;
+  let speaking = false;
+
+  const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionImpl) {
+    statusEl.textContent = 'Este navegador no soporta reconocimiento de voz (usa Chrome o Safari)';
+    startBtn.disabled = true;
+    startBtn.style.opacity = '0.5';
+  }
+
+  function addEntry(orig, trad) {
+    const div = document.createElement('div');
+    div.className = 'entry';
+    div.innerHTML = `<div class="orig">${orig}</div><div class="trad">${trad}</div>`;
+    logEl.prepend(div);
+  }
+
+  async function translate(text, source, target, apiKey) {
+    const res = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: text, source, target, format: 'text' })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error('Error API traducción: ' + res.status + ' ' + err);
+    }
+    const data = await res.json();
+    return data.data.translations[0].translatedText;
+  }
+
+  function speak(text, targetLang) {
+    return new Promise(resolve => {
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = langToBCP47[targetLang] || 'es-ES';
+      utter.onend = resolve;
+      utter.onerror = resolve;
+      speaking = true;
+      window.speechSynthesis.speak(utter);
+    });
+  }
+
+  function startRecognition() {
+    const sourceLang = $('sourceLang').value;
+    const targetLang = $('targetLang').value;
+    const apiKey = $('apiKey').value.trim();
+
+    if (!apiKey) { statusEl.textContent = 'Falta la API key (abre configuración)'; return; }
+    if (!SpeechRecognitionImpl) { statusEl.textContent = 'Este navegador no soporta reconocimiento de voz'; return; }
+
+    recognition = new SpeechRecognitionImpl();
+    recognition.lang = langToBCP47[sourceLang] || 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onresult = async (event) => {
+      const result = event.results[event.results.length - 1];
+      if (!result.isFinal) return;
+      const text = result[0].transcript.trim();
+      if (!text) return;
+
+      recognition.stop(); // pausar mientras se traduce y habla
+      statusEl.textContent = 'Traduciendo...';
+      try {
+        const translated = await translate(text, sourceLang, targetLang, apiKey);
+        addEntry(text, translated);
+        statusEl.textContent = 'Hablando...';
+        await speak(translated, targetLang);
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        console.error(e);
       }
-    }, 1200);
+      speaking = false;
+      if (listening) {
+        statusEl.textContent = 'Escuchando...';
+        try { recognition.start(); } catch (e) {}
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.error('Reconocimiento error:', e.error);
+      if (listening && e.error !== 'aborted') {
+        try { recognition.start(); } catch (err) {}
+      }
+    };
+
+    recognition.onend = () => {
+      if (listening && !speaking) {
+        try { recognition.start(); } catch (e) {}
+      }
+    };
+
+    recognition.start();
+    statusEl.textContent = 'Escuchando...';
+  }
+
+  startBtn.addEventListener('click', () => {
+    listening = !listening;
+    if (listening) {
+      startBtn.textContent = 'Detener';
+      startBtn.classList.add('listening');
+      startRecognition();
+    } else {
+      startBtn.textContent = 'Iniciar';
+      startBtn.classList.remove('listening');
+      statusEl.textContent = 'Detenido';
+      if (recognition) recognition.stop();
+      window.speechSynthesis.cancel();
+    }
   });
 </script>
 
