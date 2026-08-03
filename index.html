@@ -1,4 +1,11 @@
 <!DOCTYPE html>
+<!--
+  Traductor de voz - Tour
+  Versión: 1.0
+  Changelog:
+    1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
+          configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
+-->
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -75,7 +82,7 @@
 </head>
 <body>
 
-  <h1>Traductor de voz</h1>
+  <h1>Traductor de voz <span id="versionTag" style="font-size:11px; opacity:0.6; font-weight:400;"></span></h1>
   <div class="status" id="status">Configura y toca Iniciar</div>
 
   <button class="toggle-config" id="toggleConfigBtn">Mostrar/ocultar configuración</button>
@@ -123,9 +130,11 @@
   </div>
 
 <script>
+  const APP_VERSION = '1.0';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
+  $('versionTag').textContent = 'v' + APP_VERSION;
 
   // Cargar configuración guardada
   $('apiKey').value = localStorage.getItem('tv_apiKey') || '';
