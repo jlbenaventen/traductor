@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.0
+  Versión: 1.1
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
+    1.1 - API key ahora opcional: sin key usa un endpoint gratuito no oficial de Google Translate
+          para poder probar sin configurar Google Cloud; con key usa la API oficial (más estable).
 -->
 <html lang="es">
 <head>
@@ -88,8 +90,8 @@
   <button class="toggle-config" id="toggleConfigBtn">Mostrar/ocultar configuración</button>
 
   <div class="config" id="configBox">
-    <label>API Key de Google Cloud Translation</label>
-    <input type="password" id="apiKey" placeholder="Pega tu API key aquí">
+    <label>API Key de Google Cloud Translation (opcional — déjalo vacío para probar gratis)</label>
+    <input type="password" id="apiKey" placeholder="Sin key = modo de prueba gratuito">
 
     <div class="row">
       <div>
@@ -155,7 +157,6 @@
 
   $('saveBtn').addEventListener('click', () => {
     const key = $('apiKey').value.trim();
-    if (!key) { statusEl.textContent = 'Falta pegar la API key'; return; }
     localStorage.setItem('tv_apiKey', key);
     localStorage.setItem('tv_sourceLang', $('sourceLang').value);
     localStorage.setItem('tv_targetLang', $('targetLang').value);
@@ -196,7 +197,8 @@
     logEl.prepend(div);
   }
 
-  async function translate(text, source, target, apiKey) {
+  // Con API key: usa la API oficial de Google Cloud Translation (estable, con nivel gratuito de 500k caracteres/mes).
+  async function translateOficial(text, source, target, apiKey) {
     const res = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -204,10 +206,27 @@
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error('Error API traducción: ' + res.status + ' ' + err);
+      throw new Error('Error API oficial: ' + res.status + ' ' + err);
     }
     const data = await res.json();
     return data.data.translations[0].translatedText;
+  }
+
+  // Sin API key: endpoint gratuito no oficial de Google Translate (el mismo que usa el traductor web).
+  // No requiere cuenta ni facturación, pero no está documentado ni garantizado por Google —
+  // sirve para probar rápido; puede fallar o tener límites de uso si se abusa.
+  async function translateGratis(text, source, target) {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${source}&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Error endpoint gratuito: ' + res.status);
+    const data = await res.json();
+    // La respuesta viene como [[[ "texto traducido", "texto original", ... ], ...], ...]
+    return data[0].map(segment => segment[0]).join(' ');
+  }
+
+  async function translate(text, source, target, apiKey) {
+    if (apiKey) return translateOficial(text, source, target, apiKey);
+    return translateGratis(text, source, target);
   }
 
   function speak(text, targetLang) {
@@ -226,7 +245,6 @@
     const targetLang = $('targetLang').value;
     const apiKey = $('apiKey').value.trim();
 
-    if (!apiKey) { statusEl.textContent = 'Falta la API key (abre configuración)'; return; }
     if (!SpeechRecognitionImpl) { statusEl.textContent = 'Este navegador no soporta reconocimiento de voz'; return; }
 
     recognition = new SpeechRecognitionImpl();
