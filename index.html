@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.1
+  Versión: 1.2
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
     1.1 - API key ahora opcional: sin key usa un endpoint gratuito no oficial de Google Translate
           para poder probar sin configurar Google Cloud; con key usa la API oficial (más estable).
+    1.2 - Ya no se detiene el reconocimiento de voz mientras se traduce/habla: ahora sigue
+          escuchando todo el tiempo y encola las frases (antes se pausaba en cada frase, lo que
+          generaba huecos donde no captaba lo que decía el guía). Se agregó texto en vivo de
+          lo que va escuchando, para ver que sigue activo mientras espera la traducción.
 -->
 <html lang="es">
 <head>
@@ -240,26 +244,17 @@
     });
   }
 
-  function startRecognition() {
-    const sourceLang = $('sourceLang').value;
-    const targetLang = $('targetLang').value;
-    const apiKey = $('apiKey').value.trim();
+  // Cola de frases pendientes por traducir/hablar. El reconocimiento de voz ya NO se detiene
+  // mientras se traduce/habla — sigue escuchando y va acumulando lo que diga el guía.
+  const queue = [];
+  let processing = false;
 
-    if (!SpeechRecognitionImpl) { statusEl.textContent = 'Este navegador no soporta reconocimiento de voz'; return; }
-
-    recognition = new SpeechRecognitionImpl();
-    recognition.lang = langToBCP47[sourceLang] || 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = false;
-
-    recognition.onresult = async (event) => {
-      const result = event.results[event.results.length - 1];
-      if (!result.isFinal) return;
-      const text = result[0].transcript.trim();
-      if (!text) return;
-
-      recognition.stop(); // pausar mientras se traduce y habla
-      statusEl.textContent = 'Traduciendo...';
+  async function processQueue(sourceLang, targetLang, apiKey) {
+    if (processing) return;
+    processing = true;
+    while (queue.length) {
+      const text = queue.shift();
+      statusEl.textContent = 'Traduciendo: "' + text + '"';
       try {
         const translated = await translate(text, sourceLang, targetLang, apiKey);
         addEntry(text, translated);
@@ -270,10 +265,36 @@
         console.error(e);
       }
       speaking = false;
-      if (listening) {
-        statusEl.textContent = 'Escuchando...';
-        try { recognition.start(); } catch (e) {}
+    }
+    processing = false;
+    if (listening) statusEl.textContent = 'Escuchando...';
+  }
+
+  function startRecognition() {
+    const sourceLang = $('sourceLang').value;
+    const targetLang = $('targetLang').value;
+    const apiKey = $('apiKey').value.trim();
+
+    if (!SpeechRecognitionImpl) { statusEl.textContent = 'Este navegador no soporta reconocimiento de voz'; return; }
+
+    recognition = new SpeechRecognitionImpl();
+    recognition.lang = langToBCP47[sourceLang] || 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true; // para mostrar texto en vivo mientras escucha
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (res.isFinal) {
+          const text = res[0].transcript.trim();
+          if (text) queue.push(text);
+        } else {
+          interim += res[0].transcript;
+        }
       }
+      if (interim && !processing) statusEl.textContent = 'Escuchando: "' + interim + '"';
+      if (queue.length) processQueue(sourceLang, targetLang, apiKey);
     };
 
     recognition.onerror = (e) => {
@@ -284,7 +305,9 @@
     };
 
     recognition.onend = () => {
-      if (listening && !speaking) {
+      // El reconocimiento puede cortarse solo (límite del navegador/SO) aunque sigamos "escuchando";
+      // si es así, se reinicia enseguida, sin importar si en ese momento se está traduciendo/hablando.
+      if (listening) {
         try { recognition.start(); } catch (e) {}
       }
     };
