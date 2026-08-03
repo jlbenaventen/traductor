@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.2
+  Versión: 1.3
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
@@ -11,6 +11,13 @@
           escuchando todo el tiempo y encola las frases (antes se pausaba en cada frase, lo que
           generaba huecos donde no captaba lo que decía el guía). Se agregó texto en vivo de
           lo que va escuchando, para ver que sigue activo mientras espera la traducción.
+    1.3 - Wake Lock para que la pantalla no se bloquee y corte el reconocimiento (iOS 16.4+ /
+          Android Chrome, si el navegador lo soporta). Indicador de estado con punto de color
+          animado (escuchando/traduciendo/hablando/error) y texto más grande. Botón para repetir
+          la última traducción sin esperar nueva frase del guía. Aviso confiable de sin-internet,
+          y un casillero manual de "audífonos conectados" que habilita Iniciar — no existe forma
+          confiable de detectar el dispositivo de audio real desde una página web, así que es un
+          recordatorio, no una detección automática.
 -->
 <html lang="es">
 <head>
@@ -31,7 +38,6 @@
     padding: 20px 16px 40px;
   }
   h1 { font-size: 19px; margin: 6px 0 2px; text-align: center; }
-  .status { font-size: 14px; opacity: 0.85; margin-bottom: 18px; min-height: 18px; }
 
   .config {
     width: 100%; max-width: 380px;
@@ -84,12 +90,48 @@
   }
   .hidden { display: none; }
   .toggle-config { background: none; border: none; color: white; opacity: 0.75; font-size: 12px; margin-bottom: 10px; text-decoration: underline; }
+
+  .status-row { display: flex; align-items: center; justify-content: center; gap: 9px; margin-bottom: 16px; max-width: 380px; }
+  .status { font-size: 16px; font-weight: 600; opacity: 0.95; min-height: 22px; text-align: center; }
+  .status-dot { width: 13px; height: 13px; border-radius: 50%; background: #9aa0a6; flex-shrink: 0; }
+  .status-dot.listening { background: #34a853; animation: pulse 1.3s infinite; }
+  .status-dot.translating { background: #fbbc04; animation: pulse 0.7s infinite; }
+  .status-dot.speaking { background: #4285f4; animation: pulse 0.7s infinite; }
+  .status-dot.error { background: #ea4335; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.55); }
+    100% { box-shadow: 0 0 0 11px rgba(255,255,255,0); }
+  }
+
+  .banner {
+    width: 100%; max-width: 380px; background: #ea4335; color: white;
+    padding: 10px 14px; border-radius: 10px; font-size: 13px; margin-bottom: 12px; text-align: center;
+  }
+
+  .checklist {
+    width: 100%; max-width: 380px; background: rgba(255,255,255,0.12); border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 14px; font-size: 14px; display: flex; align-items: center; gap: 12px;
+  }
+  .checklist input { width: 22px; height: 22px; flex-shrink: 0; }
+
+  .repeat-btn {
+    width: 100%; max-width: 380px; padding: 13px; border-radius: 12px; border: none;
+    background: rgba(255,255,255,0.2); color: white; font-size: 14px; margin-bottom: 14px;
+  }
+  .repeat-btn:disabled { opacity: 0.35; }
+  .big-btn:disabled { opacity: 0.4; }
 </style>
 </head>
 <body>
 
   <h1>Traductor de voz <span id="versionTag" style="font-size:11px; opacity:0.6; font-weight:400;"></span></h1>
-  <div class="status" id="status">Configura y toca Iniciar</div>
+
+  <div class="banner hidden" id="offlineBanner">Sin conexión a internet — la traducción no va a funcionar</div>
+
+  <div class="status-row">
+    <span class="status-dot" id="statusDot"></span>
+    <div class="status" id="status">Configura y toca Iniciar</div>
+  </div>
 
   <button class="toggle-config" id="toggleConfigBtn">Mostrar/ocultar configuración</button>
 
@@ -121,7 +163,14 @@
     <button class="swap-btn" id="saveBtn">Guardar configuración</button>
   </div>
 
-  <button class="big-btn" id="startBtn">Iniciar</button>
+  <div class="checklist">
+    <input type="checkbox" id="audioCheck">
+    <label for="audioCheck">Confirmo que los audífonos (u otra salida de audio) están conectados</label>
+  </div>
+
+  <button class="big-btn" id="startBtn" disabled>Iniciar</button>
+
+  <button class="repeat-btn" id="repeatBtn" disabled>Repetir última traducción</button>
 
   <div class="log" id="log"></div>
 
@@ -131,16 +180,60 @@
     En Android (Chrome) normalmente sí funciona igual como acceso directo, pero no está
     garantizado si se abre como archivo local: si el micrófono no pide permiso, prueba
     subiendo el archivo a un hosting simple (https) en vez de abrirlo directo del teléfono.
-    El audio traducido sale por donde esté enrutado el audio de medios — confirma que el
-    dispositivo de salida (audífonos u otro) esté conectado antes de tocar Iniciar.
+    El audio traducido sale por donde esté enrutado el audio de medios. El casillero de arriba
+    es solo un recordatorio manual — desde una página web no hay forma confiable de detectar si
+    los audífonos están realmente conectados, así que hay que confirmarlo ustedes mismos.
   </div>
 
 <script>
-  const APP_VERSION = '1.2';
+  const APP_VERSION = '1.3';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
+  const statusDot = $('statusDot');
+  const repeatBtn = $('repeatBtn');
+  const audioCheck = $('audioCheck');
   $('versionTag').textContent = 'v' + APP_VERSION;
+
+  // Punto de color + texto de estado en un solo lugar, para que todo el resto del código
+  // no tenga que preocuparse de actualizar los dos por separado.
+  function setStatus(text, state) {
+    statusEl.textContent = text;
+    statusDot.className = 'status-dot' + (state ? ' ' + state : '');
+  }
+
+  // --- Banner de sin conexión (esto sí es confiable, a diferencia de detectar el audio) ---
+  function updateOnlineBanner() {
+    $('offlineBanner').classList.toggle('hidden', navigator.onLine);
+  }
+  window.addEventListener('online', updateOnlineBanner);
+  window.addEventListener('offline', updateOnlineBanner);
+  updateOnlineBanner();
+
+  // --- Checklist manual de audio: habilita "Iniciar" solo si está marcado ---
+  // (SpeechRecognitionImpl se define más abajo; updateStartEnabled() se vuelve a llamar
+  // después de esa definición para que el botón quede en el estado correcto desde el inicio)
+  function updateStartEnabled() {
+    startBtn.disabled = !audioCheck.checked || typeof SpeechRecognitionImpl === 'undefined' || !SpeechRecognitionImpl;
+  }
+  audioCheck.addEventListener('change', updateStartEnabled);
+
+  // --- Wake Lock: evita que la pantalla se bloquee y corte el reconocimiento de voz ---
+  let wakeLock = null;
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+    } catch (e) {
+      console.warn('No se pudo activar wake lock:', e);
+    }
+  }
+  function releaseWakeLock() {
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (listening && document.visibilityState === 'visible') requestWakeLock();
+  });
 
   // Cargar configuración guardada
   $('apiKey').value = localStorage.getItem('tv_apiKey') || '';
@@ -152,9 +245,9 @@
   const yaConfigurado = localStorage.getItem('tv_configured') === 'true';
   if (yaConfigurado) {
     configBox.classList.add('hidden');
-    statusEl.textContent = 'Listo. Toca Iniciar.';
+    setStatus('Listo. Marca el casillero y toca Iniciar.');
   } else {
-    statusEl.textContent = 'Primera vez: completa la configuración y guarda';
+    setStatus('Primera vez: completa la configuración y guarda');
   }
 
   $('toggleConfigBtn').addEventListener('click', () => configBox.classList.toggle('hidden'));
@@ -165,7 +258,7 @@
     localStorage.setItem('tv_sourceLang', $('sourceLang').value);
     localStorage.setItem('tv_targetLang', $('targetLang').value);
     localStorage.setItem('tv_configured', 'true');
-    statusEl.textContent = 'Configuración guardada. Listo para usar.';
+    setStatus('Configuración guardada. Marca el casillero y toca Iniciar.');
     configBox.classList.add('hidden');
   });
 
@@ -177,7 +270,7 @@
   resetBtn.addEventListener('click', () => {
     localStorage.removeItem('tv_configured');
     configBox.classList.remove('hidden');
-    statusEl.textContent = 'Edita y guarda de nuevo';
+    setStatus('Edita y guarda de nuevo');
   });
   $('toggleConfigBtn').insertAdjacentElement('afterend', resetBtn);
 
@@ -189,10 +282,9 @@
 
   const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognitionImpl) {
-    statusEl.textContent = 'Este navegador no soporta reconocimiento de voz (usa Chrome o Safari)';
-    startBtn.disabled = true;
-    startBtn.style.opacity = '0.5';
+    setStatus('Este navegador no soporta reconocimiento de voz (usa Chrome o Safari)', 'error');
   }
+  updateStartEnabled(); // ahora que SpeechRecognitionImpl ya existe, deja el botón en el estado correcto
 
   function addEntry(orig, trad) {
     const div = document.createElement('div');
@@ -248,34 +340,43 @@
   // mientras se traduce/habla — sigue escuchando y va acumulando lo que diga el guía.
   const queue = [];
   let processing = false;
+  let lastTranslatedText = '';
+  let lastTargetLang = 'es';
 
   async function processQueue(sourceLang, targetLang, apiKey) {
     if (processing) return;
     processing = true;
     while (queue.length) {
       const text = queue.shift();
-      statusEl.textContent = 'Traduciendo: "' + text + '"';
+      setStatus('Traduciendo: "' + text + '"', 'translating');
       try {
         const translated = await translate(text, sourceLang, targetLang, apiKey);
         addEntry(text, translated);
-        statusEl.textContent = 'Hablando...';
+        lastTranslatedText = translated;
+        lastTargetLang = targetLang;
+        repeatBtn.disabled = false;
+        setStatus('Hablando...', 'speaking');
         await speak(translated, targetLang);
       } catch (e) {
-        statusEl.textContent = 'Error: ' + e.message;
+        setStatus('Error: ' + e.message, 'error');
         console.error(e);
       }
       speaking = false;
     }
     processing = false;
-    if (listening) statusEl.textContent = 'Escuchando...';
+    if (listening) setStatus('Escuchando...', 'listening');
   }
+
+  repeatBtn.addEventListener('click', () => {
+    if (lastTranslatedText) speak(lastTranslatedText, lastTargetLang);
+  });
 
   function startRecognition() {
     const sourceLang = $('sourceLang').value;
     const targetLang = $('targetLang').value;
     const apiKey = $('apiKey').value.trim();
 
-    if (!SpeechRecognitionImpl) { statusEl.textContent = 'Este navegador no soporta reconocimiento de voz'; return; }
+    if (!SpeechRecognitionImpl) { setStatus('Este navegador no soporta reconocimiento de voz', 'error'); return; }
 
     // Algunos navegadores móviles no respetan bien "resultIndex" en modo continuo y vuelven a
     // mandar resultados finales que ya habíamos procesado — esto es lo que causaba que la misma
@@ -306,7 +407,7 @@
           interim += res[0].transcript;
         }
       }
-      if (interim && !processing) statusEl.textContent = 'Escuchando: "' + interim + '"';
+      if (interim && !processing) setStatus('Escuchando: "' + interim + '"', 'listening');
       if (queue.length) processQueue(sourceLang, targetLang, apiKey);
     };
 
@@ -328,7 +429,7 @@
     };
 
     recognition.start();
-    statusEl.textContent = 'Escuchando...';
+    setStatus('Escuchando...', 'listening');
   }
 
   startBtn.addEventListener('click', () => {
@@ -336,11 +437,13 @@
     if (listening) {
       startBtn.textContent = 'Detener';
       startBtn.classList.add('listening');
+      requestWakeLock();
       startRecognition();
     } else {
       startBtn.textContent = 'Iniciar';
       startBtn.classList.remove('listening');
-      statusEl.textContent = 'Detenido';
+      setStatus('Detenido');
+      releaseWakeLock();
       if (recognition) recognition.stop();
       window.speechSynthesis.cancel();
     }
