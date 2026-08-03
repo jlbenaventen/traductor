@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.4
+  Versión: 1.5
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
@@ -22,6 +22,11 @@
           automático por nuestra cuenta en cada frase. El modo continuo estaba causando que en
           algunos celulares (sobre todo Android) se repitieran frases/palabras ya traducidas,
           porque el navegador volvía a marcar como "nuevo" un resultado que ya se había procesado.
+    1.5 - Selector de voz y control de velocidad para la lectura de la traducción (voces
+          "robotizadas" varían mucho según el teléfono; ahora se puede elegir y bajar la
+          velocidad). Además, ya no se espera a que el navegador decida que una frase "terminó":
+          si el texto no cambia en ~700ms se corta la sesión por nuestra cuenta, para traducir
+          más rápido en vez de esperar el criterio (más lento y variable) del propio navegador.
 -->
 <html lang="es">
 <head>
@@ -164,6 +169,13 @@
         </select>
       </div>
     </div>
+
+    <label>Voz de la traducción</label>
+    <select id="voiceSelect"><option value="">(voz por defecto del teléfono)</option></select>
+
+    <label>Velocidad de la voz: <span id="rateLabel">0.9</span></label>
+    <input type="range" id="rateRange" min="0.6" max="1.3" step="0.05" value="0.9">
+
     <button class="swap-btn" id="saveBtn">Guardar configuración</button>
   </div>
 
@@ -190,7 +202,7 @@
   </div>
 
 <script>
-  const APP_VERSION = '1.4';
+  const APP_VERSION = '1.5';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
@@ -243,6 +255,34 @@
   $('apiKey').value = localStorage.getItem('tv_apiKey') || '';
   $('sourceLang').value = localStorage.getItem('tv_sourceLang') || 'en';
   $('targetLang').value = localStorage.getItem('tv_targetLang') || 'es';
+  $('rateRange').value = localStorage.getItem('tv_rate') || '0.9';
+  $('rateLabel').textContent = $('rateRange').value;
+  $('rateRange').addEventListener('input', () => { $('rateLabel').textContent = $('rateRange').value; });
+
+  // Las voces del navegador a veces tardan en cargar (se avisan con "voiceschanged"),
+  // por eso se intenta llenar el selector apenas se puede y también cuando avisen que ya están.
+  const savedVoiceName = localStorage.getItem('tv_voiceName') || '';
+  function populateVoices() {
+    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+    if (!voices.length) return;
+    const targetLang = $('targetLang').value;
+    const select = $('voiceSelect');
+    select.innerHTML = '<option value="">(voz por defecto del teléfono)</option>';
+    voices
+      .filter(v => v.lang && v.lang.toLowerCase().startsWith(targetLang))
+      .forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = v.name + (v.localService ? '' : ' (en línea)');
+        if (v.name === savedVoiceName) opt.selected = true;
+        select.appendChild(opt);
+      });
+  }
+  if (window.speechSynthesis) {
+    populateVoices();
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+  }
+  $('targetLang').addEventListener('change', populateVoices);
 
   // Solo pedir configuración la primera vez en este teléfono/navegador.
   // Si ya quedó guardada antes, se oculta automáticamente y queda lista para usar.
@@ -261,6 +301,8 @@
     localStorage.setItem('tv_apiKey', key);
     localStorage.setItem('tv_sourceLang', $('sourceLang').value);
     localStorage.setItem('tv_targetLang', $('targetLang').value);
+    localStorage.setItem('tv_rate', $('rateRange').value);
+    localStorage.setItem('tv_voiceName', $('voiceSelect').value);
     localStorage.setItem('tv_configured', 'true');
     setStatus('Configuración guardada. Marca el casillero y toca Iniciar.');
     configBox.classList.add('hidden');
@@ -333,6 +375,12 @@
     return new Promise(resolve => {
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = langToBCP47[targetLang] || 'es-ES';
+      utter.rate = parseFloat(localStorage.getItem('tv_rate') || '0.9');
+      const voiceName = localStorage.getItem('tv_voiceName') || '';
+      if (voiceName) {
+        const match = window.speechSynthesis.getVoices().find(v => v.name === voiceName);
+        if (match) utter.voice = match;
+      }
       utter.onend = resolve;
       utter.onerror = resolve;
       speaking = true;
@@ -388,6 +436,11 @@
     // cada sesión captura UNA sola frase y se cierra sola; nosotros la reiniciamos apenas
     // termina (onend), así igual queda escuchando todo el rato, pero sin ese efecto de eco.
     let lastQueuedText = '';
+    // El navegador a veces tarda varios segundos en decidir que una frase "terminó" (isFinal).
+    // Para no esperar tanto, si el texto que se está escuchando no cambia durante ~700ms se
+    // toma como terminado por nuestra cuenta y se corta la sesión ahí mismo (recognition.stop()),
+    // sin esperar al criterio (más lento y menos predecible) del propio navegador.
+    let interimTimer = null;
 
     recognition = new SpeechRecognitionImpl();
     recognition.lang = langToBCP47[sourceLang] || 'en-US';
@@ -399,6 +452,7 @@
       for (let i = 0; i < event.results.length; i++) {
         const res = event.results[i];
         if (res.isFinal) {
+          clearTimeout(interimTimer);
           const text = res[0].transcript.trim();
           if (text && text !== lastQueuedText) {
             queue.push(text);
@@ -408,7 +462,20 @@
           interim += res[0].transcript;
         }
       }
-      if (interim && !processing) setStatus('Escuchando: "' + interim + '"', 'listening');
+      if (interim) {
+        setStatus('Escuchando: "' + interim + '"', 'listening');
+        clearTimeout(interimTimer);
+        interimTimer = setTimeout(() => {
+          if (!listening) return;
+          const text = interim.trim();
+          if (text && text !== lastQueuedText) {
+            queue.push(text);
+            lastQueuedText = text;
+            processQueue(sourceLang, targetLang, apiKey);
+          }
+          try { recognition.stop(); } catch (e) {} // cierra esta sesión; onend abre la siguiente sola
+        }, 700);
+      }
       if (queue.length) processQueue(sourceLang, targetLang, apiKey);
     };
 
@@ -419,6 +486,7 @@
     };
 
     recognition.onend = () => {
+      clearTimeout(interimTimer);
       // Cada sesión dura una sola frase (continuous=false) y termina sola; si seguimos
       // "escuchando", se abre una sesión nueva de inmediato para el próximo tramo de habla.
       if (listening) {
