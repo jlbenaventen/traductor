@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.5
+  Versión: 1.7
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
@@ -27,6 +27,12 @@
           velocidad). Además, ya no se espera a que el navegador decida que una frase "terminó":
           si el texto no cambia en ~700ms se corta la sesión por nuestra cuenta, para traducir
           más rápido en vez de esperar el criterio (más lento y variable) del propio navegador.
+    1.6 - El tiempo de espera antes de dar por terminada una frase subió de 700ms a 1 segundo,
+          para juntar frases un poco más largas antes de traducir (menos corte/menos fragmentado).
+    1.7 - El reinicio del reconocimiento después de cada frase ahora reintenta si falla (antes el
+          error se ignoraba en silencio). Esto probablemente era la causa real de "no escucha
+          mientras habla": al cortar la sesión justo antes de hablar, el reinicio inmediato podía
+          fallar por una condición de carrera con el micrófono, y se quedaba sin reiniciar más.
 -->
 <html lang="es">
 <head>
@@ -202,7 +208,7 @@
   </div>
 
 <script>
-  const APP_VERSION = '1.5';
+  const APP_VERSION = '1.7';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
@@ -437,9 +443,10 @@
     // termina (onend), así igual queda escuchando todo el rato, pero sin ese efecto de eco.
     let lastQueuedText = '';
     // El navegador a veces tarda varios segundos en decidir que una frase "terminó" (isFinal).
-    // Para no esperar tanto, si el texto que se está escuchando no cambia durante ~700ms se
+    // Para no esperar tanto, si el texto que se está escuchando no cambia durante 1 segundo se
     // toma como terminado por nuestra cuenta y se corta la sesión ahí mismo (recognition.stop()),
     // sin esperar al criterio (más lento y menos predecible) del propio navegador.
+    const SILENCIO_MS = 1000;
     let interimTimer = null;
 
     recognition = new SpeechRecognitionImpl();
@@ -474,7 +481,7 @@
             processQueue(sourceLang, targetLang, apiKey);
           }
           try { recognition.stop(); } catch (e) {} // cierra esta sesión; onend abre la siguiente sola
-        }, 700);
+        }, SILENCIO_MS);
       }
       if (queue.length) processQueue(sourceLang, targetLang, apiKey);
     };
@@ -485,12 +492,33 @@
       console.error('Reconocimiento error:', e.error);
     };
 
+    // Reintenta el reinicio si falla. Esto era lo que probablemente causaba que "no estuviera
+    // escuchando mientras hablaba": al cortar la sesión nosotros mismos (recognition.stop())
+    // justo antes de hablar, el reinicio inmediato a veces choca porque el navegador todavía no
+    // terminó de soltar el micrófono, recognition.start() tira error, y como antes el error se
+    // ignoraba en silencio, se quedaba sin escuchar hasta que se tocara Detener/Iniciar de nuevo.
+    function safeStart(intentos) {
+      if (!listening) return;
+      try {
+        recognition.start();
+      } catch (e) {
+        if (intentos > 0) {
+          setTimeout(() => safeStart(intentos - 1), 200);
+        } else {
+          console.error('No se pudo reiniciar el reconocimiento tras varios intentos:', e);
+          setStatus('Se perdió el micrófono — toca Detener y Iniciar de nuevo', 'error');
+        }
+      }
+    }
+
     recognition.onend = () => {
       clearTimeout(interimTimer);
       // Cada sesión dura una sola frase (continuous=false) y termina sola; si seguimos
-      // "escuchando", se abre una sesión nueva de inmediato para el próximo tramo de habla.
+      // "escuchando", se abre una sesión nueva para el próximo tramo de habla. Se da un
+      // pequeño respiro (100ms) antes de reintentar, para darle tiempo al navegador a soltar
+      // el micrófono de la sesión anterior.
       if (listening) {
-        try { recognition.start(); } catch (e) {}
+        setTimeout(() => safeStart(5), 100);
       }
     };
 
