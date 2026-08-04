@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Traductor de voz - Tour
-  Versión: 1.7
+  Versión: 1.8
   Changelog:
     1.0 - Primera versión: reconocimiento de voz + Google Cloud Translation API + texto a voz,
           configuración (API key/idiomas) guardada en localStorage y pedida solo la primera vez.
@@ -33,6 +33,9 @@
           error se ignoraba en silencio). Esto probablemente era la causa real de "no escucha
           mientras habla": al cortar la sesión justo antes de hablar, el reinicio inmediato podía
           fallar por una condición de carrera con el micrófono, y se quedaba sin reiniciar más.
+    1.8 - La traducción hablada se corta antes de terminar en Chrome/Android por un bug conocido
+          del navegador (frases largas se cortan solas ~15seg). Se soluciona partiendo el audio
+          en trozos cortos hablados uno tras otro, en vez de una sola frase larga de un tirón.
 -->
 <html lang="es">
 <head>
@@ -208,7 +211,7 @@
   </div>
 
 <script>
-  const APP_VERSION = '1.7';
+  const APP_VERSION = '1.8';
   const $ = id => document.getElementById(id);
   const statusEl = $('status'), logEl = $('log'), startBtn = $('startBtn');
   const configBox = $('configBox');
@@ -377,20 +380,49 @@
     return translateGratis(text, source, target);
   }
 
-  function speak(text, targetLang) {
-    return new Promise(resolve => {
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = langToBCP47[targetLang] || 'es-ES';
-      utter.rate = parseFloat(localStorage.getItem('tv_rate') || '0.9');
-      const voiceName = localStorage.getItem('tv_voiceName') || '';
-      if (voiceName) {
-        const match = window.speechSynthesis.getVoices().find(v => v.name === voiceName);
-        if (match) utter.voice = match;
+  // Chrome (sobre todo en Android) tiene un bug conocido donde una frase hablada larga se corta
+  // sola después de unos ~15 segundos. Para evitarlo, se parte el texto en trozos cortos (por
+  // punto/coma) y se van hablando encadenados uno tras otro — cada trozo individual queda muy
+  // por debajo del límite donde aparece el corte.
+  function splitForSpeech(text, maxLen) {
+    const partes = text.match(/[^.,;!?]+[.,;!?]*/g) || [text];
+    const chunks = [];
+    let actual = '';
+    for (const p of partes) {
+      if (actual && (actual + p).length > maxLen) {
+        chunks.push(actual.trim());
+        actual = p;
+      } else {
+        actual += p;
       }
-      utter.onend = resolve;
-      utter.onerror = resolve;
-      speaking = true;
-      window.speechSynthesis.speak(utter);
+    }
+    if (actual.trim()) chunks.push(actual.trim());
+    return chunks;
+  }
+
+  function speak(text, targetLang) {
+    const chunks = splitForSpeech(text, 100);
+    const voiceName = localStorage.getItem('tv_voiceName') || '';
+    const rate = parseFloat(localStorage.getItem('tv_rate') || '0.9');
+    const lang = langToBCP47[targetLang] || 'es-ES';
+
+    return new Promise(resolve => {
+      let i = 0;
+      function siguiente() {
+        if (i >= chunks.length) { speaking = false; resolve(); return; }
+        const utter = new SpeechSynthesisUtterance(chunks[i]);
+        utter.lang = lang;
+        utter.rate = rate;
+        if (voiceName) {
+          const match = window.speechSynthesis.getVoices().find(v => v.name === voiceName);
+          if (match) utter.voice = match;
+        }
+        utter.onend = () => { i++; siguiente(); };
+        utter.onerror = () => { i++; siguiente(); };
+        speaking = true;
+        window.speechSynthesis.speak(utter);
+      }
+      siguiente();
     });
   }
 
